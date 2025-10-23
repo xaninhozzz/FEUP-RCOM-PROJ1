@@ -75,6 +75,7 @@ State nextSOrUFrameState(State state, uint8_t byte, uint8_t addressField, uint8_
 
 // ---------------------------------------------------------
 // FSM: for Information (I) frames (data-carrying)
+// the BCC2 (XOR over unstuffed payload) is verified in llread()
 // ---------------------------------------------------------
 State nextIFrameState(State state, uint8_t byte, uint8_t addressField,
                       uint8_t *frameNumber, uint8_t *buffer, int *index, int maxSize)

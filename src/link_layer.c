@@ -349,23 +349,22 @@ int llread(unsigned char *packet)
                 unsigned char unstuffed[MAX_PAYLOAD_SIZE + 2];
                 un_len = unstuff_buffer(stuffed_buf, idx, unstuffed, sizeof(unstuffed));
                 if (un_len <= 0) {
-                    // malformed/stuffing error => send REJ and continue
-                    unsigned char rej[5] = {
+                    // transparency error -> treat like BCC2 error
+                    int is_new = (frameNumberRx == expectedFrame);
+                    unsigned char resp[5] = {
                         FLAG,
                         A_RX,
-                        REJ(expectedFrame),
-                        (unsigned char)(A_RX ^ REJ(expectedFrame)),
+                        (unsigned char)(is_new ? REJ(expectedFrame) : RR(expectedFrame)),
+                        (unsigned char)(A_RX ^ (is_new ? REJ(expectedFrame) : RR(expectedFrame))),
                         FLAG
                     };
-                    send_bytes(rej, 5);
-                    // reset FSM
+                    send_bytes(resp, 5);
                     state = STATE_START;
                     idx = 0;
                     continue;
                 }
 
                 if (un_len < 1) {
-                    // nothing to deliver -> ignore
                     state = STATE_START;
                     idx = 0;
                     continue;
@@ -376,16 +375,16 @@ int llread(unsigned char *packet)
                 unsigned char calc_bcc2 = compute_bcc2(unstuffed, payload_len);
 
                 if (calc_bcc2 != received_bcc2) {
-                    // BCC2 mismatch -> REJ
-                    unsigned char rej[5] = {
+                    // BCC2 mismatch: REJ if new, RR if duplicate
+                    int is_new = (frameNumberRx == expectedFrame);
+                    unsigned char resp[5] = {
                         FLAG,
                         A_RX,
-                        REJ(expectedFrame),
-                        (unsigned char)(A_RX ^ REJ(expectedFrame)),
+                        (unsigned char)(is_new ? REJ(expectedFrame) : RR(expectedFrame)),
+                        (unsigned char)(A_RX ^ (is_new ? REJ(expectedFrame) : RR(expectedFrame))),
                         FLAG
                     };
-                    send_bytes(rej, 5);
-                    // reset and continue
+                    send_bytes(resp, 5);
                     state = STATE_START;
                     idx = 0;
                     continue;
