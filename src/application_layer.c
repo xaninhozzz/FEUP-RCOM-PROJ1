@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdint.h>
+#include <sys/types.h>
 #include <sys/stat.h>
 #include <stdlib.h>
 
@@ -13,6 +14,15 @@
 
 #define T_FILESIZE 0x00
 #define T_FILENAME 0x01
+
+// Compile-time selectable application data chunk size for DATA packets.
+// Default uses the full allowed payload minus the 4-byte data header (C,Seq,L2,L1).
+// To change at compile time, define APP_DATA_CHUNK (e.g., add -DAPP_DATA_CHUNK=200 when compiling)
+// or edit the define below. This mirrors older project styles that fix the application chunk size
+// at compile-time instead of runtime.
+#ifndef APP_DATA_CHUNK
+#define APP_DATA_CHUNK (MAX_PAYLOAD_SIZE - 4)
+#endif
 
 // Build START/END control packet with TLVs: filesize and filename
 static int build_control_packet(uint8_t ctype, const char *fname, off_t fsize,
@@ -122,6 +132,7 @@ void applicationLayer(const char *serialPort, const char *roleStr, int baudRate,
         .role = role
     };
 
+    // serialPort is an array so we need to copy it, we can't assign it 
     strcpy(connection.serialPort, serialPort);
 
     if (llopen(connection) < 0) {
@@ -150,7 +161,7 @@ void applicationLayer(const char *serialPort, const char *roleStr, int baudRate,
         }
         off_t fsize = st.st_size;
 
-        // Send START control packet
+        // Send START control packet, build packet and call llwrite
         unsigned char ctrl[MAX_PAYLOAD_SIZE];
         int clen = build_control_packet(APP_START, filename, fsize, ctrl, sizeof(ctrl));
         if (clen < 0) {
@@ -171,7 +182,9 @@ void applicationLayer(const char *serialPort, const char *roleStr, int baudRate,
         unsigned char pkt[MAX_PAYLOAD_SIZE];
         uint8_t seq = 0;
         size_t totalSent = 0;
-        const int maxDataPerPkt = MAX_PAYLOAD_SIZE - 4; // C,N,L2,L1
+        const int maxDataPerPkt = APP_DATA_CHUNK; // compile-time fixed chunk size
+        printf("[APP TX] Using chunk size (compile-time): %d bytes\n", maxDataPerPkt);
+        fflush(stdout);
 
         while (1) {
             int toRead = maxDataPerPkt;
