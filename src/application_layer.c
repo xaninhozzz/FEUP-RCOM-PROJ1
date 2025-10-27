@@ -28,7 +28,6 @@ static int build_control_packet(uint8_t ctype, const char *fname, off_t fsize,
     int sb = 0;
     {
         uint64_t sz = (uint64_t)fsize;
-        // big-endian minimal length (at least 1 byte)
         int started = 0;
         for (int i = 7; i >= 0; --i) {
             uint8_t b = (sz >> (i * 8)) & 0xFF;
@@ -44,14 +43,14 @@ static int build_control_packet(uint8_t ctype, const char *fname, off_t fsize,
     memcpy(out + pos, sizeBytes, sb);
     pos += sb;
 
-    // T=filename
     size_t nameLen = fname ? strlen(fname) : 0;
-    if (nameLen > 255) nameLen = 255; // 1-byte L
+    if (nameLen > 255) nameLen = 255;
+
     if (pos + 2 + (int)nameLen > max) return -1;
-    out[pos++] = T_FILENAME;
-    out[pos++] = (uint8_t)nameLen;
+    out[pos++] = T_FILENAME;           // T
+    out[pos++] = (uint8_t)nameLen;     // L
     if (nameLen > 0) {
-        memcpy(out + pos, fname, nameLen);
+        memcpy(out + pos, fname, nameLen); // V
         pos += (int)nameLen;
     }
 

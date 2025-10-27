@@ -28,7 +28,9 @@ static int ll_nRetransmissions = 3; // attempts
 // statistics
 static int stat_retransmissions = 0;
 static int stat_frames_sent = 0;
-static int stat_frames_recv = 0;
+static int stat_rej_received = 0;
+static int stat_timeouts = 0;
+static struct timeval t_start = {0}, t_end = {0};
 
 ////////////////////////////////////////////////
 // Helper: read single byte with timeout (seconds).
@@ -137,6 +139,7 @@ int llopen(LinkLayer connectionParameters)
                     }
                     // continue reading until timeout or stop
                 } else if (r == 0) {
+                    stat_timeouts++;               // count timeout
                     // timeout => break to retransmit
                     break;
                 } else {
@@ -192,6 +195,7 @@ int llopen(LinkLayer connectionParameters)
                             return -1;
                         }
                         printf("[RX] Connection established successfully!\n");
+                        gettimeofday(&t_start, NULL); // what this for brother
                         return 0;
                     } else {
                         // ignore and continue
@@ -270,6 +274,7 @@ int llwrite(const unsigned char *buf, int bufSize)
                     // REJ?
                     if ((control & 0x7F) == 0x01) {
                         // REJ -> retransmit immediately (but count as retransmission)
+                        stat_rej_received++;        // count REJ received
                         stat_retransmissions++;
                         attempts++;
                         if (attempts > ll_nRetransmissions) {
@@ -304,6 +309,7 @@ int llwrite(const unsigned char *buf, int bufSize)
                 // timeout - retransmit
                 attempts++;
                 stat_retransmissions++;
+                stat_timeouts++;                     // count timeout
                 if (attempts > ll_nRetransmissions) {
                     free(frame);
                     return -1;
@@ -342,7 +348,6 @@ int llread(unsigned char *packet)
             state = nextIFrameState(state, byte, A_TX, &frameNumberRx, stuffed_buf, &idx, sizeof(stuffed_buf));
 
             if (state == STATE_STOP) {
-                stat_frames_recv++;
 
                 // stuffed_buf[0..idx-1] contains stuffed payload + stuffed bcc2
                 int un_len;
@@ -474,6 +479,7 @@ int llclose()
                     }
                 } else if (r == 0) {
                     // timeout
+                    stat_timeouts++;                 // count timeout
                     break;
                 } else {
                     // error
@@ -536,9 +542,13 @@ int llclose()
     }
 
 finish_close:
-    // print statistics
-    printf("[llclose] frames sent: %d, frames received: %d, retransmissions: %d\n",
-           stat_frames_sent, stat_frames_recv, stat_retransmissions);
+    gettimeofday(&t_end, NULL);
+    double secs = (t_end.tv_sec - t_start.tv_sec) + (t_end.tv_usec - t_start.tv_usec)/1e-6;
+
+    printf("[llclose] number of frames sent: %d, retransmissions: %d, duration: %.3f s, timeouts: %d, number of REJ: %d\n",
+           stat_frames_sent, stat_retransmissions,
+           secs > 0 ? secs : 0.0, stat_timeouts, stat_rej_received
+           );
 
     closeSerialPort();
     return 0;
