@@ -17,7 +17,7 @@ typedef enum {
     STATE_A_RCV,        // Address field received
     STATE_C_RCV,        // Control field received
     STATE_BCC1_OK,      // BCC1 verified, entering data
-    STATE_DATA,         // Reading raw (stuffed) data bytes
+    STATE_DATA,         // Reading raw (stuffed) data bytes (info frame)
     STATE_STOP,         // End FLAG received, frame complete
     STATE_BAD           // Invalid frame detected
 } State;
