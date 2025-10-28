@@ -5,6 +5,10 @@
 extern int alarmActive;   // 1 when alarm is active, 0 otherwise
 extern int alarmCount;    // counts how many times the alarm expired
 
+// Flag set by SIGALRM handler to signal timeout to waiting loops
+#include <signal.h>
+extern volatile sig_atomic_t alarm_flag;
+
 // Initializes the alarm system (registers signal handler)
 void alarm_init(void);
 
