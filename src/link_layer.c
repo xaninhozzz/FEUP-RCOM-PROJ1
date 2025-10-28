@@ -2,7 +2,7 @@
 #include "link_layer.h"
 #include "serial_port.h"
 #include "state.h"
-#include "special_bytes.h"
+#include "macros.h"
 #include "utils_stuff.h"
 #include "alarm.h"
 
@@ -24,8 +24,8 @@
 
 static int fd = -1;
 static LinkLayerRole role;
-static int ll_timeout = 3;          // seconds
-static int ll_nRetransmissions = 3; // attempts
+static int timeout;          
+static int nRetransmissions; 
 
 // statistics
 static int stat_retransmissions = 0;
@@ -81,9 +81,7 @@ static int read_byte_timeout(unsigned char *out, int timeout_seconds)
 }
 
 
-////////////////////////////////////////////////
-// Helper: send buffer using existing helper; fallback to write if helper fails
-////////////////////////////////////////////////
+// send buffer using existing helper
 static int send_bytes(const unsigned char *buf, int len)
 {
     if (!buf || len <= 0) return -1;
@@ -93,13 +91,7 @@ static int send_bytes(const unsigned char *buf, int len)
         int remaining = len - total;
         int w = writeBytesSerialPort((unsigned char*)buf + total, remaining);
         if (w < 0) return -1;
-        if (w == 0) {
-            ssize_t r = write(fd, buf + total, remaining);
-            if (r <= 0) return -1;
-            total += (int)r;
-        } else {
-            total += w;
-        }
+        total += w;
     }
 
     stat_frames_sent++;
@@ -120,8 +112,8 @@ int llopen(LinkLayer connectionParameters)
     }
 
     role = connectionParameters.role;
-    ll_timeout = connectionParameters.timeout > 0 ? connectionParameters.timeout : ll_timeout;
-    ll_nRetransmissions = connectionParameters.nRetransmissions > 0 ? connectionParameters.nRetransmissions : ll_nRetransmissions;
+    timeout = connectionParameters.timeout;
+    nRetransmissions = connectionParameters.nRetransmissions;
 
     // Transmitter
     if (role == LlTx)
@@ -130,7 +122,7 @@ int llopen(LinkLayer connectionParameters)
         unsigned char frame[5] = { FLAG, A_TX, SET, (unsigned char)(A_TX ^ SET), FLAG };
 
         int attempts = 0;
-        while (attempts <= ll_nRetransmissions) {
+        while (attempts <= nRetransmissions) {
             if (send_bytes(frame, 5) != 5) {
                 perror("send SET");
                 closeSerialPort();
@@ -142,9 +134,9 @@ int llopen(LinkLayer connectionParameters)
             int gotUA = 0;
 
             while (!gotUA) {
-                int r = read_byte_timeout(&byte, ll_timeout);
+                int r = read_byte_timeout(&byte, timeout);
                 if (r == 1) {
-                    state = nextSOrUFrameState(state, byte, A_RX, &control);
+                    state = getSOrUState(state, byte, A_RX, &control);
                     if (state == STATE_STOP && control == UA) {
                         printf("[TX] Connection established successfully!\n");
                         // mark session start time
@@ -152,8 +144,7 @@ int llopen(LinkLayer connectionParameters)
                         return 0;
                     }
                 } else if (r == 0) {
-                    stat_timeouts++;               // count timeout
-                    // timeout => break to retransmit
+                    stat_timeouts++;
                     break;
                 } else {
                     perror("read");
@@ -164,12 +155,12 @@ int llopen(LinkLayer connectionParameters)
 
             attempts++;
             stat_retransmissions++;
-            if (attempts > ll_nRetransmissions) {
+            if (attempts > nRetransmissions) {
                 fprintf(stderr, "[TX] SET retries exhausted\n");
                 closeSerialPort();
                 return -1;
             }
-            printf("[TX] Timeout, retransmitting SET (attempt %d/%d)...\n", attempts, ll_nRetransmissions);
+            printf("[TX] Timeout, retransmitting SET (attempt %d/%d)...\n", attempts, nRetransmissions);
         }
         closeSerialPort();
         return -1;
@@ -183,9 +174,9 @@ int llopen(LinkLayer connectionParameters)
         unsigned char byte = 0, control = 0;
 
         while (1) {
-            ssize_t r = read(fd, &byte, 1);
+            int r = readByteSerialPort(&byte);
             if (r == 1) {
-                state = nextSOrUFrameState(state, byte, A_TX, &control);
+                state = getSOrUState(state, byte, A_TX, &control);
                 if (state == STATE_STOP && control == SET) {
                     unsigned char ua[5] = { FLAG, A_RX, UA, (unsigned char)(A_RX ^ UA), FLAG };
                     if (send_bytes(ua, 5) != 5) {
@@ -243,15 +234,15 @@ int llwrite(const unsigned char *buf, int bufSize)
     int attempts = 0;
     int rej_retries = 0;
 
-    while (attempts <= ll_nRetransmissions) {
+    while (attempts <= nRetransmissions) {
         if (send_bytes(frame, frame_len) != frame_len) {
                 attempts++;
                 stat_retransmissions++;
-                if (attempts > ll_nRetransmissions) {
+                if (attempts > nRetransmissions) {
                     free(frame);
                     return -1;
                 }
-                printf("[TX] Send error, retransmitting (%d/%d)\n", attempts, ll_nRetransmissions);
+                printf("[TX] Send error, retransmitting (%d/%d)\n", attempts, nRetransmissions);
                 continue;
         }
 
@@ -260,9 +251,9 @@ int llwrite(const unsigned char *buf, int bufSize)
         int done = 0;
 
         while (!done) {
-            int r = read_byte_timeout(&byte, ll_timeout);
+            int r = read_byte_timeout(&byte, timeout);
             if (r == 1) {
-                state = nextSOrUFrameState(state, byte, A_RX, &control);
+                state = getSOrUState(state, byte, A_RX, &control);
                 if (state == STATE_STOP) {
                     // check control type
                     // REJ?
@@ -271,11 +262,11 @@ int llwrite(const unsigned char *buf, int bufSize)
                         stat_rej_received++;        // count REJ received
                         stat_retransmissions++;
                         rej_retries++;
-                        if (rej_retries > ll_nRetransmissions) {
+                        if (rej_retries > nRetransmissions) {
                             free(frame);
                             return -1;
                         }
-                        printf("[TX] REJ received, retransmitting (REJ %d/%d)\n", rej_retries, ll_nRetransmissions);
+                        printf("[TX] REJ received, retransmitting (REJ %d/%d)\n", rej_retries, nRetransmissions);
                         done = 1;
                     } else if ((control & 0x7F) == 0x05) { // RR
                         int rbit = (control & 0x80) ? 1 : 0;
@@ -291,11 +282,11 @@ int llwrite(const unsigned char *buf, int bufSize)
                 stat_retransmissions++;
                 rej_retries = 0;
                 stat_timeouts++;                     // count timeout
-                if (attempts > ll_nRetransmissions) {
+                if (attempts > nRetransmissions) {
                     free(frame);
                     return -1;
                 }
-                printf("[TX] Timeout waiting RR, retransmitting (%d/%d)\n", attempts, ll_nRetransmissions);
+                printf("[TX] Timeout waiting RR, retransmitting (%d/%d)\n", attempts, nRetransmissions);
                 done = 1;
             } else {
                 printf("[TX] Read error while waiting RR/REJ\n");
@@ -323,7 +314,7 @@ int llread(unsigned char *packet)
     while (1) {
         ssize_t r = read(fd, &byte, 1);
         if (r == 1) {
-            state = nextIFrameState(state, byte, A_TX, &frameNumberRx, stuffed_buf, &idx, sizeof(stuffed_buf));
+            state = getIState(state, byte, A_TX, &frameNumberRx, stuffed_buf, &idx, sizeof(stuffed_buf));
             if (state == STATE_STOP) {
 
                 unsigned char unstuffed[MAX_PAYLOAD_SIZE + 2];
@@ -374,15 +365,15 @@ int llclose()
 
     if (role == LlTx) {
         int attempts = 0;
-        while (attempts <= ll_nRetransmissions) {
+        while (attempts <= nRetransmissions) {
             if (send_bytes(disc_tx, 5) != 5) return -1;
 
             state = STATE_START;
             int got_disc = 0;
             while (1) {
-                int r = read_byte_timeout(&byte, ll_timeout);
+                int r = read_byte_timeout(&byte, timeout);
                 if (r == 1) {
-                    state = nextSOrUFrameState(state, byte, A_RX, &control);
+                    state = getSOrUState(state, byte, A_RX, &control);
                     if (state == STATE_STOP && control == DISC) { got_disc = 1; break; }
                 } else if (r == 0) break; // timeout
                 else { closeSerialPort(); return -1; }
@@ -394,7 +385,7 @@ int llclose()
             } else {
                 attempts++;
                 stat_retransmissions++;
-                if (attempts > ll_nRetransmissions) { closeSerialPort(); return -1; }
+                if (attempts > nRetransmissions) { closeSerialPort(); return -1; }
             }
         }
     } else {
@@ -402,17 +393,17 @@ int llclose()
         while (1) {
             ssize_t r = read(fd, &byte, 1);
             if (r == 1) {
-                state = nextSOrUFrameState(state, byte, A_TX, &control);
+                state = getSOrUState(state, byte, A_TX, &control);
                 if (state == STATE_STOP && control == DISC) {
                     int attempts = 0;
-                    while (attempts <= ll_nRetransmissions) {
+                    while (attempts <= nRetransmissions) {
                         send_bytes(disc_rx, 5);
                         state = STATE_START;
                         int got_ua = 0;
                         while (1) {
-                            int r2 = read_byte_timeout(&byte, ll_timeout);
+                            int r2 = read_byte_timeout(&byte, timeout);
                             if (r2 == 1) {
-                                state = nextSOrUFrameState(state, byte, A_RX, &control);
+                                state = getSOrUState(state, byte, A_RX, &control);
                                 if (state == STATE_STOP && control == UA) { got_ua = 1; break; }
                             } else if (r2 == 0) break;
                             else { closeSerialPort(); return -1; }
@@ -420,7 +411,7 @@ int llclose()
                         if (got_ua) goto finish_close;
                         attempts++;
                         stat_retransmissions++;
-                        if (attempts > ll_nRetransmissions) { closeSerialPort(); return -1; }
+                        if (attempts > nRetransmissions) { closeSerialPort(); return -1; }
                     }
                 }
             } else { closeSerialPort(); return -1; }

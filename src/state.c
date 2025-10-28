@@ -1,31 +1,11 @@
 #include "state.h"
-#include "special_bytes.h"
-#include <stdio.h>   // optional, for debugging/logging
-
-// ---------------------------------------------------------
-// Helper: check if a control field corresponds to a valid S or U frame
-// ---------------------------------------------------------
-bool isValidSOrUFrameControl(uint8_t byte) {
-    return (byte == SET)  ||
-           (byte == UA)   ||
-           (byte == DISC) ||
-           (byte == RR(0)) ||
-           (byte == RR(1)) ||
-           (byte == REJ(0)) ||
-           (byte == REJ(1));
-}
-
-// ---------------------------------------------------------
-// Helper: return true if current state is within data reading
-// ---------------------------------------------------------
-bool isDataState(State state) {
-    return state == STATE_DATA;
-}
+#include "macros.h"
+#include <stdio.h>
 
 // ---------------------------------------------------------
 // FSM: for Supervisory or Unnumbered frames (SET, UA, DISC, RR, REJ)
 // ---------------------------------------------------------
-State nextSOrUFrameState(State state, uint8_t byte, uint8_t addressField, uint8_t *controlField) {
+State getSOrUState(State state, uint8_t byte, uint8_t addressField, uint8_t *controlField) {
     switch (state) {
 
         case STATE_START:
@@ -41,7 +21,9 @@ State nextSOrUFrameState(State state, uint8_t byte, uint8_t addressField, uint8_
             break;
 
         case STATE_A_RCV:
-            if (isValidSOrUFrameControl(byte)) {
+            if ((byte == SET) || (byte == UA) || (byte == DISC) ||
+                (byte == RR(0)) || (byte == RR(1)) ||
+                (byte == REJ(0)) || (byte == REJ(1))) {
                 *controlField = byte;
                 state = STATE_C_RCV;
             } else if (byte == FLAG) {
@@ -77,7 +59,7 @@ State nextSOrUFrameState(State state, uint8_t byte, uint8_t addressField, uint8_
 // FSM: for Information (I) frames (data-carrying)
 // the BCC2 (XOR over unstuffed payload) is verified in llread()
 // ---------------------------------------------------------
-State nextIFrameState(State state, uint8_t byte, uint8_t addressField,
+State getIState(State state, uint8_t byte, uint8_t addressField,
                       uint8_t *frameNumber, uint8_t *buffer, int *index, int maxSize)
 {
     switch (state) {
@@ -129,20 +111,20 @@ State nextIFrameState(State state, uint8_t byte, uint8_t addressField,
                     (*index)++;
                     state = STATE_DATA;
                 } else {
-                    state = STATE_BAD;
+                    state = STATE_ERROR;
                 }
             }
             break;
 
         case STATE_DATA:
             if (byte == FLAG) {
-                state = STATE_STOP; // end of frame
+                state = STATE_STOP;
             } else {
                 if (*index < maxSize) {
                     buffer[*index] = byte;
                     (*index)++;
                 } else {
-                    state = STATE_BAD; // buffer overflow
+                    state = STATE_ERROR;
                 }
             }
             break;
