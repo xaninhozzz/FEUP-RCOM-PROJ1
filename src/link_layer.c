@@ -40,8 +40,7 @@ static int stat_timeouts        = 0;
 
 static struct timeval t_start = {0}, t_end = {0};
 
-// alarm flag comes from alarm.c
-extern volatile sig_atomic_t alarm_flag;
+// Timer state comes from alarm.c via alarmActive
 
 ////////////////////////////////////////////////
 // Helpers
@@ -100,12 +99,11 @@ int llopen(LinkLayer connectionParameters)
             }
 
             printf("[TX] Waiting for UA (attempt %d/%d)...\n", attempts + 1, nRetransmissions);
-            alarm_flag = 0;
             alarm_start((unsigned int)timeout);
 
             state = STATE_START;
-            while (!alarm_flag) {
-                ssize_t r = read(fd, &byte, 1);
+            while (alarmActive) {
+                int r = readByteSerialPort( &byte);
                 if (r == 1) {
                     state = getSOrUState(state, byte, A_RX, &control);
                     if (state == STATE_STOP && control == UA) {
@@ -220,10 +218,9 @@ int llwrite(const unsigned char *buf, int bufSize)
         unsigned char byte = 0, control = 0;
 
         // Start per-frame timer waiting for RR/REJ
-        alarm_flag = 0;
         alarm_start((unsigned int)timeout);
 
-        while (!alarm_flag) {
+        while (alarmActive) {
             ssize_t r = read(fd, &byte, 1);
             if (r == 1) {
                 state = getSOrUState(state, byte, A_RX, &control);
@@ -365,10 +362,9 @@ int llclose()
             state = STATE_START;
             int got_disc = 0;
 
-            alarm_flag = 0;
             alarm_start((unsigned int)timeout);
 
-            while (!alarm_flag) {
+            while (alarmActive) {
                 ssize_t r = read(fd, &byte, 1);
                 if (r == 1) {
                     state = getSOrUState(state, byte, A_RX, &control);
@@ -414,10 +410,9 @@ int llclose()
                         state = STATE_START;
                         int got_ua = 0;
 
-                        alarm_flag = 0;
                         alarm_start((unsigned int)timeout);
 
-                        while (!alarm_flag) {
+                        while (alarmActive) {
                             ssize_t r2 = read(fd, &byte, 1);
                             if (r2 == 1) {
                                 state = getSOrUState(state, byte, A_RX, &control);

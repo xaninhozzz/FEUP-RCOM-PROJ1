@@ -6,12 +6,9 @@
 #include <stdio.h>
 #include <string.h>
 
-// Global variables (simple ints, like in the example)
+// Global variables (use volatile int per project constraints)
 int alarmActive = 0;
 int alarmCount = 0;
-
-volatile sig_atomic_t alarm_flag = 0;
-
 
 // Internal signal handler
 static void alarmHandler(int sig)
@@ -19,7 +16,6 @@ static void alarmHandler(int sig)
     alarmActive = 0;
     alarmCount++;
     // Keep handler minimal (async-signal-safe)
-    alarm_flag = 1; // notify wait loops that timeout occurred
 }
 
 // Initializes the alarm system
