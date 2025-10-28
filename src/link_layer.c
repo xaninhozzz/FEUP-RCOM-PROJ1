@@ -147,6 +147,8 @@ int llopen(LinkLayer connectionParameters)
                     state = nextSOrUFrameState(state, byte, A_RX, &control);
                     if (state == STATE_STOP && control == UA) {
                         printf("[TX] Connection established successfully!\n");
+                        // mark session start time
+                        gettimeofday(&t_start, NULL);
                         return 0;
                     }
                 } else if (r == 0) {
@@ -192,6 +194,8 @@ int llopen(LinkLayer connectionParameters)
                         return -1;
                     }
                     printf("[RX] Connection established successfully!\n");
+                    // mark session start time
+                    gettimeofday(&t_start, NULL);
                     return 0;
                 }
             } else if (r <= 0) {
@@ -425,7 +429,8 @@ int llclose()
 
 finish_close:
     gettimeofday(&t_end, NULL);
-    double secs = (t_end.tv_sec - t_start.tv_sec) + (t_end.tv_usec - t_start.tv_usec)/1e-6;
+    // compute seconds correctly: microseconds divided by 1e6
+    double secs = (t_end.tv_sec - t_start.tv_sec) + (t_end.tv_usec - t_start.tv_usec)/1e6;
 
     printf("[llclose] number of frames sent: %d, retransmissions: %d, duration: %.3f s, timeouts: %d, number of REJ: %d\n",
            stat_frames_sent, stat_retransmissions,
@@ -434,4 +439,4 @@ finish_close:
 
     closeSerialPort();
     return 0;
-}
+}   
