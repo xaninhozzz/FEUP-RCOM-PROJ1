@@ -17,9 +17,9 @@ typedef enum {
     STATE_A_RCV,        // Address field received
     STATE_C_RCV,        // Control field received
     STATE_BCC1_OK,      // BCC1 verified, entering data
-    STATE_DATA,         // Reading raw (stuffed) data bytes
+    STATE_DATA,         // Reading raw (stuffed) data bytes (info frame)
     STATE_STOP,         // End FLAG received, frame complete
-    STATE_BAD           // Invalid frame detected
+    STATE_ERROR           // Invalid frame detected
 } State;
 
 // ---------------------------------------------------------
@@ -38,7 +38,7 @@ typedef enum {
  * @param maxSize       Maximum allowed buffer size.
  * @return              Updated FSM state.
  */
-State nextIFrameState(State state, uint8_t byte, uint8_t addressField,
+State getIState(State state, uint8_t byte, uint8_t addressField,
                       uint8_t *frameNumber, uint8_t *buffer, int *index, int maxSize);
 
 
@@ -51,32 +51,7 @@ State nextIFrameState(State state, uint8_t byte, uint8_t addressField,
  * @param controlField  Output: control byte read from frame.
  * @return              Updated FSM state.
  */
-State nextSOrUFrameState(State state, uint8_t byte, uint8_t addressField, uint8_t *controlField);
+State getSOrUState(State state, uint8_t byte, uint8_t addressField, uint8_t *controlField);
 
-
-/**
- * @brief Checks whether the given byte is a valid S or U control field.
- * 
- * @param byte  The control byte to validate.
- * @return      true if valid; false otherwise.
- */
-bool isValidSOrUFrameControl(uint8_t byte);
-
-
-/**
- * @brief Checks whether the FSM is currently inside the data portion.
- * 
- * @param state Current state.
- * @return      true if in STATE_DATA; false otherwise.
- */
-bool isDataState(State state);
-
-
-/**
- * @brief Resets FSM state to initial.
- * 
- * @return      STATE_START
- */
-static inline State resetState(void) { return STATE_START; }
 
 #endif // _STATE_H_

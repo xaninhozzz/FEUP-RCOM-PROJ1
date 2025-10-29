@@ -10,7 +10,7 @@
 #define A_TX 0x03  // Commands from transmitter to receiver
 #define A_RX 0x01  // Commands from receiver to transmitter
 
-
+//Control field
 #define SET 0x03
 #define UA  0x07
 #define DISC 0x0B

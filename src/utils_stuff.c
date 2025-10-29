@@ -1,5 +1,5 @@
 #include "utils_stuff.h"
-#include "special_bytes.h"
+#include "macros.h"
 #include <stddef.h>
 
 /* Stuff bytes: ESC + (byte ^ STUFF_XOR) for FLAG or ESC */

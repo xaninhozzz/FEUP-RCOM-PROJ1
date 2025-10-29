@@ -1,16 +1,17 @@
 #ifndef _ALARM_H_
 #define _ALARM_H_
 
-// Boolean constants for TRUE and FALSE
-#define FALSE 0
-#define TRUE 1
+// Global alarm state (updated by SIGALRM handler)
+extern int alarmActive;   // 1 when alarm is active, 0 otherwise
+extern int alarmCount;    // counts how many times the alarm expired
 
-// Extern declarations for global variables to track alarm state and count
-extern int alarm_enabled; // Indicates whether the alarm is currently enabled
-extern int alarm_count;   // Counts how many times the alarm has been triggered
+// Initializes the alarm system (registers signal handler)
+void alarm_init(void);
 
-// Function declaration for the alarm signal handler
-// This function will handle the signal when the alarm goes off
-void alarm_handler(int signal);
+// Starts the alarm (timeout in seconds)
+void alarm_start(unsigned int seconds);
+
+// Stops the alarm
+void alarm_stop(void);
 
 #endif // _ALARM_H_
