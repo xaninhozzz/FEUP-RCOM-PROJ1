@@ -25,8 +25,7 @@
 #endif
 
 // Build START/END control packet with TLVs: filesize and filename
-static int build_control_packet(uint8_t ctype, const char *fname, off_t fsize,
-                                unsigned char *out, int max)
+static int build_control_packet(uint8_t ctype, const char *fname, off_t fsize, unsigned char *out, int max)
 {
     if (!out || max <= 0) return -1;
     int pos = 0;
@@ -39,7 +38,7 @@ static int build_control_packet(uint8_t ctype, const char *fname, off_t fsize,
     {
         uint64_t sz = (uint64_t)fsize;
         int started = 0;
-        for (int i = 7; i >= 0; --i) {
+        for (int i = 7; i >= 0; i--) {
             uint8_t b = (sz >> (i * 8)) & 0xFF;
             if (!started && b == 0 && i != 0) continue;
             started = 1;
@@ -68,8 +67,7 @@ static int build_control_packet(uint8_t ctype, const char *fname, off_t fsize,
 }
 
 // Build DATA packet
-static int build_data_packet(uint8_t seq, const unsigned char *data, int len,
-                             unsigned char *out, int max)
+static int build_data_packet(uint8_t seq, const unsigned char *data, int len, unsigned char *out, int max)
 {
     if (!out || max < 4 || len < 0) return -1;
     int header = 4;
@@ -83,8 +81,7 @@ static int build_data_packet(uint8_t seq, const unsigned char *data, int len,
 }
 
 // Parse START/END control packet; returns 0 on success
-static int parse_control_packet(const unsigned char *buf, int len,
-                                char *out_name, size_t name_cap, off_t *out_size)
+static int parse_control_packet(const unsigned char *buf, int len, char *out_name, size_t name_cap, off_t *out_size)
 {
     if (!buf || len < 1) return -1;
     int pos = 1; // skip C
@@ -120,8 +117,7 @@ static int parse_control_packet(const unsigned char *buf, int len,
     return (haveSize ? 0 : -1);
 }
 
-void applicationLayer(const char *serialPort, const char *roleStr, int baudRate,
-                      int nTries, int timeout, const char *filename)
+void applicationLayer(const char *serialPort, const char *roleStr, int baudRate, int nTries, int timeout, const char *filename)
 {
     LinkLayerRole role = (strcmp(roleStr, "tx") == 0) ? LlTx : LlRx;
 

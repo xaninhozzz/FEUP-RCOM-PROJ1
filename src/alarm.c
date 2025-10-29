@@ -11,6 +11,7 @@ int alarmActive = 0;
 int alarmCount = 0;
 
 // Internal signal handler
+// Called automatically by the OS when alarm(timeout) expires, will trigger retransmissions
 static void alarmHandler(int sig)
 {
     alarmActive = 0;
@@ -19,6 +20,8 @@ static void alarmHandler(int sig)
 }
 
 // Initializes the alarm system
+// SIGALRM is the alarm clock signal in Unix systems
+// Registers alarmHandler() as the SIGALRM handler
 void alarm_init(void)
 {
     // Configure SIGALRM handler similarly to the classroom example
