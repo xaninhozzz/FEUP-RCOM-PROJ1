@@ -11,6 +11,7 @@
 #include "macros.h"
 #include "utils_stuff.h"
 #include "alarm.h"
+#include "statistics.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -27,26 +28,20 @@
 // Globals / configuration saved from llopen
 ////////////////////////////////////////////////
 
-static int fd = -1;
 static LinkLayerRole role;
 static int timeout;           // seconds
 static int nRetransmissions;  // max retries
 
-// statistics
-static int stat_retransmissions = 0;
-static int stat_frames_sent     = 0;
-static int stat_rej_received    = 0;
-static int stat_timeouts        = 0;
 
-static struct timeval t_start = {0}, t_end = {0};
+static ll_statistics stats;    
 
-// Timer state comes from alarm.c via alarmActive
+static struct timeval tv_tmp = {0}; // helper for timestamps
+
 
 ////////////////////////////////////////////////
 // Helpers
 ////////////////////////////////////////////////
 
-// send buffer using existing helper
 static int send_bytes(const unsigned char *buf, int len)
 {
     if (!buf || len <= 0) return -1;
@@ -59,7 +54,7 @@ static int send_bytes(const unsigned char *buf, int len)
         total += w;
     }
 
-    stat_frames_sent++;
+    stats.frames_sent++;
     return total;
 }
 
@@ -68,8 +63,8 @@ static int send_bytes(const unsigned char *buf, int len)
 ////////////////////////////////////////////////
 int llopen(LinkLayer connectionParameters)
 {
-    fd = openSerialPort(connectionParameters.serialPort, connectionParameters.baudRate);
-    if (fd < 0) {
+
+    if (openSerialPort(connectionParameters.serialPort, connectionParameters.baudRate) < 0) {
         perror("openSerialPort");
         return -1;
     }
@@ -80,6 +75,8 @@ int llopen(LinkLayer connectionParameters)
 
     // ensure alarm is initialized once
     alarm_init();
+    // reset statistics for a new session
+    stats_init(&stats);
 
     // Transmitter
     if (role == LlTx)
@@ -93,6 +90,7 @@ int llopen(LinkLayer connectionParameters)
 
         while (attempts < nRetransmissions) {
             // Send SET frame
+            stats.SET_sent++;
             if (send_bytes(frame, 5) != 5) {
                 perror("send SET");
                 closeSerialPort();
@@ -112,7 +110,11 @@ int llopen(LinkLayer connectionParameters)
                     if (state == STATE_STOP && control == UA) {
                         alarm_stop();
                         printf("[TX] Connection established successfully!\n");
-                        gettimeofday(&t_start, NULL);
+                        // mark start time
+                        gettimeofday(&tv_tmp, NULL);
+                        stats.start_time = tv_tmp.tv_sec + tv_tmp.tv_usec / 1e6;
+                        stats.frames_received++; // UA received
+                        stats.UA_received++;
                         return 0;
                     }
                 } 
@@ -132,8 +134,8 @@ int llopen(LinkLayer connectionParameters)
 
             // Timeout, will trigger retransmission
 
-            stat_timeouts++;
-            stat_retransmissions++;
+            stats.timeouts++;
+            stats.retransmissions++;
             printf("[TX] Timeout waiting for UA — retransmitting SET...\n");
             attempts++;
         }
@@ -157,15 +159,20 @@ int llopen(LinkLayer connectionParameters)
                 state = getSOrUState(state, byte, A_TX, &control);
                 // Valid SET frame received
                 if (state == STATE_STOP && control == SET) {
+                    stats.frames_received++;
+                    stats.SET_received++;
                     // Send UA
                     unsigned char ua[5] = { FLAG, A_RX, UA, (unsigned char)(A_RX ^ UA), FLAG };
+                    stats.UA_sent++;
                     if (send_bytes(ua, 5) != 5) {
                         perror("send UA");
                         closeSerialPort();
                         return -1;
                     }
                     printf("[RX] Connection established successfully!\n");
-                    gettimeofday(&t_start, NULL);
+                    // mark start time
+                    gettimeofday(&tv_tmp, NULL);
+                    stats.start_time = tv_tmp.tv_sec + tv_tmp.tv_usec / 1e6;
                     return 0;
                 }
             } else if (r < 0) {
@@ -207,8 +214,7 @@ int llwrite(const unsigned char *buf, int bufSize)
     if (stuffed_len < 0) return -1;
 
     // Build I-frame: F A C BCC1 [stuffed payload+bcc2] F
-    unsigned char *frame = malloc(4 + stuffed_len + 1);
-    if (!frame) return -1;
+    unsigned char frame[stuffed_len + 5];
 
     int frame_len = 0;
     frame[frame_len++] = FLAG;
@@ -226,9 +232,10 @@ int llwrite(const unsigned char *buf, int bufSize)
     while (attempts < nRetransmissions) {
 
         // Send I frames
+    stats.I_frames_sent++;
         if (send_bytes(frame, frame_len) != frame_len) {
             attempts++;
-            stat_retransmissions++;
+            stats.retransmissions++;
             printf("[TX] Send error, retransmitting (%d/%d)\n", attempts, nRetransmissions);
             continue;
         }
@@ -240,18 +247,19 @@ int llwrite(const unsigned char *buf, int bufSize)
         alarm_start((unsigned int)timeout);
 
         while (alarmActive) {
-            ssize_t r = read(fd, &byte, 1);
+            ssize_t r = readByteSerialPort(&byte);
             if (r == 1) {
                 state = getSOrUState(state, byte, A_RX, &control);
+                // S/U parsing: FSM will self-recover to START/FLAG_RCV as needed
                 if (state == STATE_STOP) {
                     // REJ received: stop timer, retransmit
                     if ((control & 0x7F) == 0x01) {
                         alarm_stop();
-                        stat_rej_received++;
-                        stat_retransmissions++;
+                        stats.REJ_received++;
+                        stats.retransmissions++;
+                        stats.frames_received++;
                         rej_retries++;
                         if (rej_retries > nRetransmissions) {
-                            free(frame);
                             return -1;
                         }
                         printf("[TX] REJ received, retransmitting (REJ %d/%d)\n", rej_retries, nRetransmissions);
@@ -262,11 +270,12 @@ int llwrite(const unsigned char *buf, int bufSize)
                     else if ((control & 0x7F) == 0x05) {
                         // N(r)
                         int rbit = (control & 0x80) ? 1 : 0;
+                        stats.RR_received++;
+                        stats.frames_received++;
                         // Toggle N(s) to receive next frame
                         if (rbit == (frameNumber ^ 1)) {
                             alarm_stop();
                             frameNumber ^= 1;
-                            free(frame);
                             return bufSize;
                         }
                         // else: RR for current Ns (duplicate), ignore
@@ -280,7 +289,6 @@ int llwrite(const unsigned char *buf, int bufSize)
                 }
                 alarm_stop();
                 printf("[TX] Read error while waiting RR/REJ\n");
-                free(frame);
                 return -1;
             }
             // else r==0, no data yet
@@ -288,9 +296,9 @@ int llwrite(const unsigned char *buf, int bufSize)
         }
 
         // Timeout, retransmit
-        stat_timeouts++;
+    stats.timeouts++;
         attempts++;
-        stat_retransmissions++;
+    stats.retransmissions++;
         rej_retries = 0;
         printf("[TX] Timeout waiting RR/REJ, retransmitting (%d/%d)\n", attempts, nRetransmissions);
 
@@ -298,8 +306,6 @@ int llwrite(const unsigned char *buf, int bufSize)
         ; 
     }
 
-    // Retransmissions exhausted
-    free(frame);
     return -1;
 }
 
@@ -317,10 +323,12 @@ int llread(unsigned char *packet)
     int idx = 0;
 
     while (1) {
-        ssize_t r = read(fd, &byte, 1);
+        ssize_t r = readByteSerialPort(&byte);
         if (r == 1) {
             state = getIState(state, byte, A_TX, &frameNumberRx, stuffed_buf, &idx, sizeof(stuffed_buf));
+            if (state == STATE_ERROR) { state = STATE_START; idx = 0; continue; }           //BE SURE OF THIS
             if (state == STATE_STOP) {
+                stats.frames_received++;
 
                 unsigned char unstuffed[MAX_PAYLOAD_SIZE + 2];
                 int un_len = unstuff_buffer(stuffed_buf, idx, unstuffed, sizeof(unstuffed));
@@ -335,6 +343,7 @@ int llread(unsigned char *packet)
                 if (calc_bcc2 != recv_bcc2) {
                     // Data error → REJ(expectedFrame)
                     unsigned char resp[5] = { FLAG, A_RX, REJ(expectedFrame), (unsigned char)(A_RX ^ REJ(expectedFrame)), FLAG };
+                    stats.REJ_sent++;
                     send_bytes(resp, 5);
                     state = STATE_START; idx = 0;
                     continue;
@@ -344,13 +353,16 @@ int llread(unsigned char *packet)
                 if (frameNumberRx == expectedFrame) {
                     // Accept payload
                     memcpy(packet, unstuffed, payload_len);
+                    stats.I_frames_received++;
                     expectedFrame ^= 1;
                     unsigned char rr[5] = { FLAG, A_RX, RR(expectedFrame), (unsigned char)(A_RX ^ RR(expectedFrame)), FLAG };
+                    stats.RR_sent++;
                     send_bytes(rr, 5);
                     return payload_len;
                 } else {
                     // Duplicate → re-ACK last expected
                     unsigned char rr_dup[5] = { FLAG, A_RX, RR(expectedFrame), (unsigned char)(A_RX ^ RR(expectedFrame)), FLAG };
+                    stats.RR_sent++;
                     send_bytes(rr_dup, 5);
                     state = STATE_START; idx = 0;
                     continue;
@@ -381,6 +393,7 @@ int llclose()
         int attempts = 0;
 
         while (attempts < nRetransmissions) {
+            stats.DISC_sent++;
             if (send_bytes(disc_tx, 5) != 5) {
                 closeSerialPort();
                 return -1;
@@ -392,10 +405,11 @@ int llclose()
             alarm_start((unsigned int)timeout);
 
             while (alarmActive) {
-                ssize_t r = read(fd, &byte, 1);
+                ssize_t r = readByteSerialPort(&byte);
                 if (r == 1) {
                     state = getSOrUState(state, byte, A_RX, &control);
-                    if (state == STATE_STOP && control == DISC) { got_disc = 1; break; }
+                    // S/U parsing: FSM will self-recover to START/FLAG_RCV as needed
+                    if (state == STATE_STOP && control == DISC) { got_disc = 1; stats.frames_received++; stats.DISC_received++; break; }
                 } else if (r < 0 && errno != EAGAIN && errno != EINTR) {
                     alarm_stop();
                     closeSerialPort();
@@ -405,13 +419,14 @@ int llclose()
 
             if (got_disc) {
                 alarm_stop();
+                stats.UA_sent++;
                 send_bytes(ua_tx, 5);
                 goto finish_close;
             } else {
                 // timeout
-                stat_timeouts++;
+                stats.timeouts++;
                 attempts++;
-                stat_retransmissions++;
+                stats.retransmissions++;
                 printf("[TX] Timeout waiting DISC, retransmitting (%d/%d)\n", attempts, nRetransmissions);
             }
         }
@@ -425,13 +440,17 @@ int llclose()
 
         // Wait DISC from Tx
         while (1) {
-            ssize_t r = read(fd, &byte, 1);
+            ssize_t r = readByteSerialPort(&byte);
             if (r == 1) {
                 state = getSOrUState(state, byte, A_TX, &control);
+                // S/U parsing: FSM will self-recover to START/FLAG_RCV as needed
                 if (state == STATE_STOP && control == DISC) {
+                    stats.frames_received++;
+                    stats.DISC_received++;
                     // Send DISC and wait UA with alarm+retries
                     int attempts = 0;
                     while (attempts < nRetransmissions) {
+                        stats.DISC_sent++;
                         send_bytes(disc_rx, 5);
 
                         state = STATE_START;
@@ -440,10 +459,11 @@ int llclose()
                         alarm_start((unsigned int)timeout);
 
                         while (alarmActive) {
-                            ssize_t r2 = read(fd, &byte, 1);
+                            ssize_t r2 = readByteSerialPort(&byte);
                             if (r2 == 1) {
                                 state = getSOrUState(state, byte, A_RX, &control);
-                                if (state == STATE_STOP && control == UA) { got_ua = 1; break; }
+                                // S/U parsing: FSM will self-recover to START/FLAG_RCV as needed
+                                if (state == STATE_STOP && control == UA) { got_ua = 1; stats.frames_received++; stats.UA_received++; break; }
                             } else if (r2 < 0 && errno != EAGAIN && errno != EINTR) {
                                 alarm_stop();
                                 closeSerialPort();
@@ -457,9 +477,9 @@ int llclose()
                         }
 
                         // timeout: try again
-                        stat_timeouts++;
+                        stats.timeouts++;
                         attempts++;
-                        stat_retransmissions++;
+                        stats.retransmissions++;
                         printf("[RX] Timeout waiting UA, retransmitting DISC (%d/%d)\n", attempts, nRetransmissions);
                     }
 
@@ -475,13 +495,11 @@ int llclose()
     }
 
 finish_close:
-    gettimeofday(&t_end, NULL);
-    double secs = (t_end.tv_sec - t_start.tv_sec) + (t_end.tv_usec - t_start.tv_usec)/1e6;
-
-    printf("[llclose] number of frames sent: %d, retransmissions: %d, duration: %.3f s, timeouts: %d, number of REJ: %d\n",
-           stat_frames_sent, stat_retransmissions,
-           secs > 0 ? secs : 0.0, stat_timeouts, stat_rej_received
-    );
+    gettimeofday(&tv_tmp, NULL);
+    stats.end_time = tv_tmp.tv_sec + tv_tmp.tv_usec / 1e6;
+    stats_update_duration(&stats);
+    // Print stats from our role perspective to avoid confusion
+    print_statistics_for_role(&stats, role == LlTx ? 1 : 0);
 
     closeSerialPort();
     return 0;
