@@ -137,12 +137,10 @@ void applicationLayer(const char *serialPort, const char *roleStr, int baudRate,
 
     if (llopen(connection) < 0) {
         printf("Failed to establish connection.\n");
-        fflush(stdout);
         return;
     }
 
     printf("Connection established successfully.\n");
-    fflush(stdout);
 
     if (role == LlTx) {
         // TX: open file and get its size
@@ -184,7 +182,6 @@ void applicationLayer(const char *serialPort, const char *roleStr, int baudRate,
         size_t totalSent = 0;
         const int maxDataPerPkt = APP_DATA_CHUNK; // compile-time fixed chunk size
         printf("[APP TX] Using chunk size (compile-time): %d bytes\n", maxDataPerPkt);
-        fflush(stdout);
 
         while (1) {
             int toRead = maxDataPerPkt;
@@ -202,7 +199,6 @@ void applicationLayer(const char *serialPort, const char *roleStr, int baudRate,
 
             int sent = llwrite(pkt, plen);
             printf("[APP TX] seq=%u chunk=%d llwrite_return=%d\n", seq, bytesRead, sent);
-            fflush(stdout);
             if (sent < 0) {
                 printf("Error writing data.\n");
                 fclose(fp);
@@ -278,7 +274,6 @@ void applicationLayer(const char *serialPort, const char *roleStr, int baudRate,
                 }
                 gotStart = 1;
                 printf("[APP RX] START name=\"%s\" size=%lld\n", outName, (long long)expectedSize);
-                fflush(stdout);
             }
             else if (ctype == APP_DATA) {
                 if (!gotStart) {
@@ -310,7 +305,6 @@ void applicationLayer(const char *serialPort, const char *roleStr, int baudRate,
                     written += len;
                 }
                 printf("[APP RX] DATA seq=%u len=%d total_written=%lld\n", seq, len, (long long)written);
-                fflush(stdout);
             }
             else if (ctype == APP_END) {
                 // Optionally verify END metadata
@@ -336,5 +330,4 @@ void applicationLayer(const char *serialPort, const char *roleStr, int baudRate,
         printf("Connection closed.\n");
     else
         printf("Error closing connection.\n");
-    fflush(stdout);
 }
