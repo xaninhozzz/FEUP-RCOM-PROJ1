@@ -99,12 +99,14 @@ int llopen(LinkLayer connectionParameters)
 
             printf("[TX] Waiting for UA (attempt %d/%d)...\n", attempts + 1, nRetransmissions);
             alarm_start((unsigned int)timeout);
-
             state = STATE_START;
+
+            // Wait for UA or timeout
             while (alarmActive) {
                 int r = readByteSerialPort( &byte);
                 if (r == 1) {
                     state = getSOrUState(state, byte, A_RX, &control);
+                    // Valid UA frame received
                     if (state == STATE_STOP && control == UA) {
                         alarm_stop();
                         printf("[TX] Connection established successfully!\n");
@@ -115,13 +117,19 @@ int llopen(LinkLayer connectionParameters)
                         stats.UA_received++;
                         return 0;
                     }
-                } else if (r < 0 && errno != EAGAIN && errno != EINTR) {
-                    perror("read UA");
+                } 
+                else if (r < 0) {
+                    // Expected errors, nothing to read or alarm interruption, continue
+                    if (errno == EAGAIN || errno == EINTR) {
+                        continue;
+                    }
+                    // Actual error, send error to app layer
+                    perror("[TX] read UA");
                     alarm_stop();
                     closeSerialPort();
                     return -1;
                 }
-                // else: r==0 (no byte now) or EINTR/EAGAIN → keep looping until alarm or UA
+                // else r==0, no data yet
             }
 
             // Timeout, will trigger retransmission
@@ -132,6 +140,7 @@ int llopen(LinkLayer connectionParameters)
             attempts++;
         }
 
+        // Retransmissions exhausted
         fprintf(stderr, "[TX] SET retries exhausted (%d attempts)\n", attempts);
         closeSerialPort();
         return -1;
@@ -148,6 +157,7 @@ int llopen(LinkLayer connectionParameters)
             int r = readByteSerialPort(&byte);
             if (r == 1) {
                 state = getSOrUState(state, byte, A_TX, &control);
+                // Valid SET frame received
                 if (state == STATE_STOP && control == SET) {
                     stats.frames_received++;
                     stats.SET_received++;
@@ -165,11 +175,15 @@ int llopen(LinkLayer connectionParameters)
                     stats.start_time = tv_tmp.tv_sec + tv_tmp.tv_usec / 1e6;
                     return 0;
                 }
-            } else if (r <= 0) {
+            } else if (r < 0) {
+                if (errno == EAGAIN || errno == EINTR) {
+                    continue;
+                }
                 perror("read SET (RX)");
                 closeSerialPort();
                 return -1;
             }
+            // else r==0, no data yet
         }
     }
 
@@ -181,10 +195,11 @@ int llopen(LinkLayer connectionParameters)
 ////////////////////////////////////////////////
 int llwrite(const unsigned char *buf, int bufSize)
 {
+    // N(s)
     static int frameNumber = 0;
     if (bufSize > MAX_PAYLOAD_SIZE) return -1;
 
-    // Build BCC2: XOR of payload
+    // Build BCC2, XOR of payload
     unsigned char bcc2 = 0x00;
     for (int i = 0; i < bufSize; i++) bcc2 ^= buf[i];
 
@@ -228,7 +243,7 @@ int llwrite(const unsigned char *buf, int bufSize)
         State state = STATE_START;
         unsigned char byte = 0, control = 0;
 
-        // Start per-frame timer waiting for RR/REJ
+        // Start timer, waiting for RR/REJ
         alarm_start((unsigned int)timeout);
 
         while (alarmActive) {
@@ -237,9 +252,8 @@ int llwrite(const unsigned char *buf, int bufSize)
                 state = getSOrUState(state, byte, A_RX, &control);
                 // S/U parsing: FSM will self-recover to START/FLAG_RCV as needed
                 if (state == STATE_STOP) {
-                    // REJ?
+                    // REJ received: stop timer, retransmit
                     if ((control & 0x7F) == 0x01) {
-                        // REJ received: stop timer, retransmit immediately
                         alarm_stop();
                         stats.REJ_received++;
                         stats.retransmissions++;
@@ -249,11 +263,12 @@ int llwrite(const unsigned char *buf, int bufSize)
                             return -1;
                         }
                         printf("[TX] REJ received, retransmitting (REJ %d/%d)\n", rej_retries, nRetransmissions);
-                        // break inner loop → resend same frame (attempt not incremented here to keep same semantics)
+                        // Jump directly to retransmission, so it doesnt count as an attempt/timeout
                         goto retransmit_same_frame;
                     }
-                    // RR?
+                    // RR received
                     else if ((control & 0x7F) == 0x05) {
+                        // N(r)
                         int rbit = (control & 0x80) ? 1 : 0;
                         stats.RR_received++;
                         stats.frames_received++;
@@ -263,15 +278,21 @@ int llwrite(const unsigned char *buf, int bufSize)
                             frameNumber ^= 1;
                             return bufSize;
                         }
-                        // else: RR for current Ns (duplicate) → keep waiting
+                        // else: RR for current Ns (duplicate), ignore
                     }
                 }
-            } else if (r < 0 && errno != EAGAIN && errno != EINTR) {
-                // hard read error
+            } 
+
+            else if (r < 0) {
+                if (errno == EAGAIN || errno == EINTR) {
+                    continue;
+                }
                 alarm_stop();
                 printf("[TX] Read error while waiting RR/REJ\n");
                 return -1;
             }
+            // else r==0, no data yet
+
         }
 
         // Timeout, retransmit
@@ -281,8 +302,8 @@ int llwrite(const unsigned char *buf, int bufSize)
         rej_retries = 0;
         printf("[TX] Timeout waiting RR/REJ, retransmitting (%d/%d)\n", attempts, nRetransmissions);
 
-retransmit_same_frame:
-        ; // label target needs a statement
+    retransmit_same_frame:
+        ; 
     }
 
     return -1;
