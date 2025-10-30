@@ -8,7 +8,7 @@ extern int alarmCount;    // counts how many times the alarm expired
 // Initializes the alarm system (registers signal handler)
 void alarm_init(void);
 
-// Starts the alarm (timeout in seconds)
+// Starts the alarm
 void alarm_start(unsigned int seconds);
 
 // Stops the alarm

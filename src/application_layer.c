@@ -7,7 +7,7 @@
 #include <sys/stat.h>
 #include <stdlib.h>
 
-// Application-layer packet types and TLVs
+// Packet types
 #define APP_START  0x01
 #define APP_DATA   0x02
 #define APP_END    0x03
@@ -15,24 +15,18 @@
 #define T_FILESIZE 0x00
 #define T_FILENAME 0x01
 
-// Compile-time selectable application data chunk size for DATA packets.
-// Default uses the full allowed payload minus the 4-byte data header (C,Seq,L2,L1).
-// To change at compile time, define APP_DATA_CHUNK (e.g., add -DAPP_DATA_CHUNK=200 when compiling)
-// or edit the define below. This mirrors older project styles that fix the application chunk size
-// at compile-time instead of runtime.
-#ifndef APP_DATA_CHUNK
-#define APP_DATA_CHUNK (MAX_PAYLOAD_SIZE - 4)
-#endif
-
-// Build START/END control packet with TLVs: filesize and filename
-static int build_control_packet(uint8_t ctype, const char *fname, off_t fsize, unsigned char *out, int max)
-{
+// Builds a START or END control packet
+static int build_control_packet(uint8_t ctype, const char *fname, off_t fsize, unsigned char *out, int max){
+    // Check for invalid buffer or size
     if (!out || max <= 0) return -1;
     int pos = 0;
+
+    // Control field, start or end packet
     if (pos + 1 > max) return -1;
     out[pos++] = ctype;
 
-    // T=filesize
+    // Filesize
+
     uint8_t sizeBytes[8];
     int sb = 0;
     {
@@ -46,20 +40,27 @@ static int build_control_packet(uint8_t ctype, const char *fname, off_t fsize, u
         }
         if (sb == 0) { sizeBytes[sb++] = 0; }
     }
+
     if (pos + 2 + sb > max) return -1;
+
+    // Write TLV
     out[pos++] = T_FILESIZE;
     out[pos++] = (uint8_t)sb;
     memcpy(out + pos, sizeBytes, sb);
     pos += sb;
 
+    // Filename
+
     size_t nameLen = fname ? strlen(fname) : 0;
     if (nameLen > 255) nameLen = 255;
 
     if (pos + 2 + (int)nameLen > max) return -1;
-    out[pos++] = T_FILENAME;           // T
-    out[pos++] = (uint8_t)nameLen;     // L
+
+    // Write TLV
+    out[pos++] = T_FILENAME;          
+    out[pos++] = (uint8_t)nameLen;    
     if (nameLen > 0) {
-        memcpy(out + pos, fname, nameLen); // V
+        memcpy(out + pos, fname, nameLen); 
         pos += (int)nameLen;
     }
 
@@ -67,58 +68,74 @@ static int build_control_packet(uint8_t ctype, const char *fname, off_t fsize, u
 }
 
 // Build DATA packet
-static int build_data_packet(uint8_t seq, const unsigned char *data, int len, unsigned char *out, int max)
-{
+static int build_data_packet(uint8_t seq, const unsigned char *data, int len, unsigned char *out, int max) {
     if (!out || max < 4 || len < 0) return -1;
+
+    // Ensure the packet fits into the out buffer
     int header = 4;
     if (header + len > max) return -1;
+
     out[0] = APP_DATA;
     out[1] = seq;
     out[2] = (uint8_t)((len >> 8) & 0xFF);
     out[3] = (uint8_t)(len & 0xFF);
+
+    // Copy payload
     if (len > 0) memcpy(out + header, data, len);
+
+    // Return packet size
     return header + len;
 }
 
-// Parse START/END control packet; returns 0 on success
-static int parse_control_packet(const unsigned char *buf, int len, char *out_name, size_t name_cap, off_t *out_size)
-{
+// Parse START/END control packet
+static int parse_control_packet(const unsigned char *buf, int len, char *out_name, size_t name_cap, off_t *out_size) {
     if (!buf || len < 1) return -1;
-    int pos = 1; // skip C
+
+    // Skip control byte
+    int pos = 1;
     uint64_t fsize = 0;
     int haveSize = 0;
 
+    // Parse TLV fields
     while (pos + 2 <= len) {
         uint8_t T = buf[pos++];
         uint8_t L = buf[pos++];
         if (pos + L > len) return -1;
 
         if (T == T_FILESIZE) {
+            // Decode file size
             if (L == 0 || L > 8) return -1;
             fsize = 0;
             for (int i = 0; i < L; ++i) {
                 fsize = (fsize << 8) | buf[pos + i];
             }
             haveSize = 1;
-        } else if (T == T_FILENAME) {
+        }
+        else if (T == T_FILENAME) {
+            // Copy filename
             size_t copy = (size_t)L;
             if (copy >= name_cap) copy = name_cap ? name_cap - 1 : 0;
             if (copy > 0 && out_name) {
                 memcpy(out_name, buf + pos, copy);
                 out_name[copy] = '\0';
-            } else if (L == 0) {
+            }
+            else if (L == 0) {
+                // Empty filename
                 if (out_name && name_cap > 0) out_name[0] = '\0';
             }
         }
+
+        // Move to next TLV field
         pos += L;
     }
 
     if (out_size) *out_size = (off_t)fsize;
+
+    // Require at least the filesize
     return (haveSize ? 0 : -1);
 }
 
-void applicationLayer(const char *serialPort, const char *roleStr, int baudRate, int nTries, int timeout, const char *filename)
-{
+void applicationLayer(const char *serialPort, const char *roleStr, int baudRate, int nTries, int timeout, const char *filename) {
     LinkLayerRole role = (strcmp(roleStr, "tx") == 0) ? LlTx : LlRx;
 
     LinkLayer connection = {
@@ -135,8 +152,6 @@ void applicationLayer(const char *serialPort, const char *roleStr, int baudRate,
         printf("Failed to establish connection.\n");
         return;
     }
-
-    printf("Connection established successfully.\n");
 
     if (role == LlTx) {
         // TX: open file and get its size
@@ -176,8 +191,8 @@ void applicationLayer(const char *serialPort, const char *roleStr, int baudRate,
         unsigned char pkt[MAX_PAYLOAD_SIZE];
         uint8_t seq = 0;
         size_t totalSent = 0;
-        const int maxDataPerPkt = APP_DATA_CHUNK; // compile-time fixed chunk size
-        printf("[APP TX] Using chunk size (compile-time): %d bytes\n", maxDataPerPkt);
+        const int maxDataPerPkt = (MAX_PAYLOAD_SIZE - 4);
+        printf("[APP TX] Using chunk size: %d bytes\n", maxDataPerPkt);
 
         while (1) {
             int toRead = maxDataPerPkt;
@@ -224,7 +239,8 @@ void applicationLayer(const char *serialPort, const char *roleStr, int baudRate,
         fclose(fp);
         printf("File sent successfully.\n");
 
-    } else {
+    }
+    else {
         // RX: wait for START, extract metadata, then receive DATA until END
         unsigned char buf[MAX_PAYLOAD_SIZE];
         int bytesRead;
@@ -306,6 +322,7 @@ void applicationLayer(const char *serialPort, const char *roleStr, int baudRate,
                 // Optionally verify END metadata
                 off_t endSize = 0;
                 char endName[256];
+                
                 if (parse_control_packet(buf, bytesRead, endName, sizeof(endName), &endSize) == 0) {
                     if (expectedSize && endSize && endSize != expectedSize) {
                         printf("Warning: END size mismatch (%lld vs %lld)\n", (long long)expectedSize, (long long)endSize);
@@ -322,8 +339,6 @@ void applicationLayer(const char *serialPort, const char *roleStr, int baudRate,
         printf("File received successfully (%lld bytes).\n", (long long)written);
     }
 
-    if (llclose() == 0)
-        printf("Connection closed.\n");
-    else
-        printf("Error closing connection.\n");
+    if (llclose() == 0) printf("Connection closed.\n");
+    else printf("Error closing connection.\n");
 }

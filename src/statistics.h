@@ -34,4 +34,4 @@ void print_statistics(const ll_statistics *s);
 // is_tx: 1 if transmitter, 0 if receiver
 void print_statistics_for_role(const ll_statistics *s, int is_tx);
 
-#endif /* STATISTICS_H */
+#endif // STATISTICS_H 

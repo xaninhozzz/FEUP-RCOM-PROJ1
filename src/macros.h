@@ -1,14 +1,13 @@
 #ifndef _SPECIAL_BYTES_H_
 #define _SPECIAL_BYTES_H_
 
-// Frame boundary
 #define FLAG 0x7E
 #define ESC  0x7D
 #define STUFF_XOR 0x20
 
 // Addresses
-#define A_TX 0x03  // Commands from transmitter to receiver
-#define A_RX 0x01  // Commands from receiver to transmitter
+#define A_TX 0x03  
+#define A_RX 0x01  
 
 //Control field
 #define SET 0x03

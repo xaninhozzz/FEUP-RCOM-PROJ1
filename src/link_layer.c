@@ -42,8 +42,7 @@ static struct timeval tv_tmp = {0}; // helper for timestamps
 // Helpers
 ////////////////////////////////////////////////
 
-static int send_bytes(const unsigned char *buf, int len)
-{
+static int send_bytes(const unsigned char *buf, int len){
     if (!buf || len <= 0) return -1;
     int total = 0;
 
@@ -61,8 +60,7 @@ static int send_bytes(const unsigned char *buf, int len)
 ////////////////////////////////////////////////
 // LLOPEN
 ////////////////////////////////////////////////
-int llopen(LinkLayer connectionParameters)
-{
+int llopen(LinkLayer connectionParameters) {
 
     if (openSerialPort(connectionParameters.serialPort, connectionParameters.baudRate) < 0) {
         perror("openSerialPort");
@@ -79,8 +77,7 @@ int llopen(LinkLayer connectionParameters)
     stats_init(&stats);
 
     // Transmitter
-    if (role == LlTx)
-    {
+    if (role == LlTx) {
         printf("[TX] Sending SET frame...\n");
         unsigned char frame[5] = { FLAG, A_TX, SET, (unsigned char)(A_TX ^ SET), FLAG };
 
@@ -147,8 +144,7 @@ int llopen(LinkLayer connectionParameters)
     }
 
     // Receiver
-    else if (role == LlRx)
-    {
+    else if (role == LlRx){
         printf("[RX] Waiting for SET frame...\n");
         State state = STATE_START;
         unsigned char byte = 0, control = 0;
@@ -175,7 +171,8 @@ int llopen(LinkLayer connectionParameters)
                     stats.start_time = tv_tmp.tv_sec + tv_tmp.tv_usec / 1e6;
                     return 0;
                 }
-            } else if (r < 0) {
+            }
+            else if (r < 0) {
                 if (errno == EAGAIN || errno == EINTR) {
                     continue;
                 }
@@ -193,8 +190,7 @@ int llopen(LinkLayer connectionParameters)
 ////////////////////////////////////////////////
 // LLWRITE (Transmitter only sends I-frames)
 ////////////////////////////////////////////////
-int llwrite(const unsigned char *buf, int bufSize)
-{
+int llwrite(const unsigned char *buf, int bufSize) {
     // N(s)
     static int frameNumber = 0;
     if (bufSize > MAX_PAYLOAD_SIZE) return -1;
@@ -232,7 +228,7 @@ int llwrite(const unsigned char *buf, int bufSize)
     while (attempts < nRetransmissions) {
 
         // Send I frames
-    stats.I_frames_sent++;
+        stats.I_frames_sent++;
         if (send_bytes(frame, frame_len) != frame_len) {
             attempts++;
             stats.retransmissions++;
@@ -296,9 +292,9 @@ int llwrite(const unsigned char *buf, int bufSize)
         }
 
         // Timeout, retransmit
-    stats.timeouts++;
+        stats.timeouts++;
         attempts++;
-    stats.retransmissions++;
+        stats.retransmissions++;
         rej_retries = 0;
         printf("[TX] Timeout waiting RR/REJ, retransmitting (%d/%d)\n", attempts, nRetransmissions);
 
@@ -312,8 +308,7 @@ int llwrite(const unsigned char *buf, int bufSize)
 ////////////////////////////////////////////////
 // LLREAD (Receiver parses I-frames and replies)
 ////////////////////////////////////////////////
-int llread(unsigned char *packet)
-{
+int llread(unsigned char *packet){
     static int expectedFrame = 0;
     State state = STATE_START;
     unsigned char byte;
@@ -326,13 +321,25 @@ int llread(unsigned char *packet)
         ssize_t r = readByteSerialPort(&byte);
         if (r == 1) {
             state = getIState(state, byte, A_TX, &frameNumberRx, stuffed_buf, &idx, sizeof(stuffed_buf));
-            if (state == STATE_ERROR) { state = STATE_START; idx = 0; continue; }           //BE SURE OF THIS
+            
+            // Discard buffer if bad header/wrong BCC1
+            if (state == STATE_ERROR) {
+                state = STATE_START;
+                idx = 0;
+                continue;
+            }           
+
             if (state == STATE_STOP) {
                 stats.frames_received++;
 
                 unsigned char unstuffed[MAX_PAYLOAD_SIZE + 2];
                 int un_len = unstuff_buffer(stuffed_buf, idx, unstuffed, sizeof(unstuffed));
-                if (un_len <= 0) { state = STATE_START; idx = 0; continue; }
+                
+                if (un_len <= 0) { 
+                    state = STATE_START;
+                    idx = 0; 
+                    continue; 
+                }
 
                 int payload_len = un_len - 1;
                 unsigned char recv_bcc2 = unstuffed[un_len - 1];
@@ -341,7 +348,7 @@ int llread(unsigned char *packet)
                 unsigned char calc_bcc2 = compute_bcc2(unstuffed, payload_len);
 
                 if (calc_bcc2 != recv_bcc2) {
-                    // Data error → REJ(expectedFrame)
+                    // Data error so REJ(expectedFrame)
                     unsigned char resp[5] = { FLAG, A_RX, REJ(expectedFrame), (unsigned char)(A_RX ^ REJ(expectedFrame)), FLAG };
                     stats.REJ_sent++;
                     send_bytes(resp, 5);
@@ -359,17 +366,20 @@ int llread(unsigned char *packet)
                     stats.RR_sent++;
                     send_bytes(rr, 5);
                     return payload_len;
-                } else {
-                    // Duplicate → re-ACK last expected
+                }
+                else {
+                    // Duplicate so re ACK last expected
                     unsigned char rr_dup[5] = { FLAG, A_RX, RR(expectedFrame), (unsigned char)(A_RX ^ RR(expectedFrame)), FLAG };
                     stats.RR_sent++;
                     send_bytes(rr_dup, 5);
-                    state = STATE_START; idx = 0;
+                    state = STATE_START;
+                    idx = 0;
                     continue;
                 }
             }
-        } else if (r <= 0) {
-            return -1; // hard read error or EOF
+        } 
+        else if (r <= 0) {
+            return -1;
         }
     }
 }
@@ -377,8 +387,7 @@ int llread(unsigned char *packet)
 ////////////////////////////////////////////////
 // LLCLOSE
 ////////////////////////////////////////////////
-int llclose()
-{
+int llclose() {
     unsigned char disc_tx[5] = { FLAG, A_TX, DISC, (unsigned char)(A_TX ^ DISC), FLAG };
     unsigned char disc_rx[5] = { FLAG, A_RX, DISC, (unsigned char)(A_RX ^ DISC), FLAG };
     unsigned char ua_tx[5]   = { FLAG, A_RX, UA,   (unsigned char)(A_RX ^ UA),   FLAG };
@@ -386,12 +395,13 @@ int llclose()
     State state;
     unsigned char byte = 0, control = 0;
 
-    // ensure alarm is initialized (safe if already done)
     alarm_init();
 
+    //Transmitter
     if (role == LlTx) {
         int attempts = 0;
 
+        // Send DISC and wait for DISC from receiver
         while (attempts < nRetransmissions) {
             stats.DISC_sent++;
             if (send_bytes(disc_tx, 5) != 5) {
@@ -408,9 +418,16 @@ int llclose()
                 ssize_t r = readByteSerialPort(&byte);
                 if (r == 1) {
                     state = getSOrUState(state, byte, A_RX, &control);
-                    // S/U parsing: FSM will self-recover to START/FLAG_RCV as needed
-                    if (state == STATE_STOP && control == DISC) { got_disc = 1; stats.frames_received++; stats.DISC_received++; break; }
-                } else if (r < 0 && errno != EAGAIN && errno != EINTR) {
+
+                    if (state == STATE_STOP && control == DISC) {
+                        // Valid DISC received
+                        got_disc = 1;
+                        stats.frames_received++;
+                        stats.DISC_received++;
+                        break;
+                    }
+                }
+                else if (r < 0 && errno != EAGAIN && errno != EINTR) {
                     alarm_stop();
                     closeSerialPort();
                     return -1;
@@ -420,10 +437,12 @@ int llclose()
             if (got_disc) {
                 alarm_stop();
                 stats.UA_sent++;
+                // Send UA to confirm closing
                 send_bytes(ua_tx, 5);
                 goto finish_close;
-            } else {
-                // timeout
+            }
+            else {
+                // Timeout
                 stats.timeouts++;
                 attempts++;
                 stats.retransmissions++;
@@ -431,28 +450,32 @@ int llclose()
             }
         }
 
-        // exceeded attempts
+        // Exceeded attempts
         closeSerialPort();
         return -1;
     }
-    else { // Receiver
+
+    // Receiver
+    else { 
         state = STATE_START;
 
-        // Wait DISC from Tx
+        // Wait DISC from tx
         while (1) {
             ssize_t r = readByteSerialPort(&byte);
+
             if (r == 1) {
                 state = getSOrUState(state, byte, A_TX, &control);
-                // S/U parsing: FSM will self-recover to START/FLAG_RCV as needed
+
+                // DISC received
                 if (state == STATE_STOP && control == DISC) {
                     stats.frames_received++;
                     stats.DISC_received++;
-                    // Send DISC and wait UA with alarm+retries
+
+                    // Send DISC and wait for UA from tx
                     int attempts = 0;
                     while (attempts < nRetransmissions) {
                         stats.DISC_sent++;
                         send_bytes(disc_rx, 5);
-
                         state = STATE_START;
                         int got_ua = 0;
 
@@ -460,11 +483,18 @@ int llclose()
 
                         while (alarmActive) {
                             ssize_t r2 = readByteSerialPort(&byte);
+                            
                             if (r2 == 1) {
                                 state = getSOrUState(state, byte, A_RX, &control);
-                                // S/U parsing: FSM will self-recover to START/FLAG_RCV as needed
-                                if (state == STATE_STOP && control == UA) { got_ua = 1; stats.frames_received++; stats.UA_received++; break; }
-                            } else if (r2 < 0 && errno != EAGAIN && errno != EINTR) {
+                                if (state == STATE_STOP && control == UA) { 
+                                    // Valid UA received, terminate connection
+                                    got_ua = 1;
+                                    stats.frames_received++;
+                                    stats.UA_received++;
+                                    break;
+                                 }
+                            }
+                            else if (r2 < 0 && errno != EAGAIN && errno != EINTR) {
                                 alarm_stop();
                                 closeSerialPort();
                                 return -1;
@@ -476,18 +506,20 @@ int llclose()
                             goto finish_close;
                         }
 
-                        // timeout: try again
+                        // Timeout
                         stats.timeouts++;
                         attempts++;
                         stats.retransmissions++;
                         printf("[RX] Timeout waiting UA, retransmitting DISC (%d/%d)\n", attempts, nRetransmissions);
                     }
 
-                    // exceeded attempts from RX side
+                    // Attempts exceeded
                     closeSerialPort();
                     return -1;
                 }
-            } else {
+            } 
+            
+            else {
                 closeSerialPort();
                 return -1;
             }
@@ -498,7 +530,7 @@ finish_close:
     gettimeofday(&tv_tmp, NULL);
     stats.end_time = tv_tmp.tv_sec + tv_tmp.tv_usec / 1e6;
     stats_update_duration(&stats);
-    // Print stats from our role perspective to avoid confusion
+
     print_statistics_for_role(&stats, role == LlTx ? 1 : 0);
 
     closeSerialPort();
