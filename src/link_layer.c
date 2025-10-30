@@ -31,6 +31,7 @@
 static LinkLayerRole role;
 static int timeout;           // seconds
 static int nRetransmissions;  // max retries
+static int rr_disabled = 0; // added flag
 
 
 static ll_statistics stats;    
@@ -72,6 +73,7 @@ int llopen(LinkLayer connectionParameters)
     role = connectionParameters.role;
     timeout = connectionParameters.timeout;
     nRetransmissions = connectionParameters.nRetransmissions;
+    rr_disabled = (getenv("DISABLE_RR") != NULL);
 
     // ensure alarm is initialized once
     alarm_init();
@@ -340,14 +342,26 @@ int llread(unsigned char *packet)
                     stats.I_frames_received++;
                     expectedFrame ^= 1;
                     unsigned char rr[5] = { FLAG, A_RX, RR(expectedFrame), (unsigned char)(A_RX ^ RR(expectedFrame)), FLAG };
-                    stats.RR_sent++;
                     send_bytes(rr, 5);
+                    if (!rr_disabled) {
+                        unsigned char rr[5] = { FLAG, A_RX, RR(expectedFrame), (unsigned char)(A_RX ^ RR(expectedFrame)), FLAG };
+                        stats.RR_sent++;
+                        send_bytes(rr, 5);
+                    } else {
+                        // RR suppressed for testing retransmissions
+                    }
                     return payload_len;
                 } else {
                     // Duplicate → re-ACK last expected
                     unsigned char rr_dup[5] = { FLAG, A_RX, RR(expectedFrame), (unsigned char)(A_RX ^ RR(expectedFrame)), FLAG };
-                    stats.RR_sent++;
                     send_bytes(rr_dup, 5);
+                    if (!rr_disabled) {
+                        unsigned char rr_dup[5] = { FLAG, A_RX, RR(expectedFrame), (unsigned char)(A_RX ^ RR(expectedFrame)), FLAG };
+                        stats.RR_sent++;
+                        send_bytes(rr_dup, 5);
+                    } else {
+                        // RR suppressed for testing retransmissions
+                    }
                     state = STATE_START; idx = 0;
                     continue;
                 }
