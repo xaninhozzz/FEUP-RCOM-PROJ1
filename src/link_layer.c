@@ -199,8 +199,7 @@ int llwrite(const unsigned char *buf, int bufSize)
     if (stuffed_len < 0) return -1;
 
     // Build I-frame: F A C BCC1 [stuffed payload+bcc2] F
-    unsigned char *frame = malloc(4 + stuffed_len + 1);
-    if (!frame) return -1;
+    unsigned char frame[stuffed_len + 5];
 
     int frame_len = 0;
     frame[frame_len++] = FLAG;
@@ -247,7 +246,6 @@ int llwrite(const unsigned char *buf, int bufSize)
                         stats.frames_received++;
                         rej_retries++;
                         if (rej_retries > nRetransmissions) {
-                            free(frame);
                             return -1;
                         }
                         printf("[TX] REJ received, retransmitting (REJ %d/%d)\n", rej_retries, nRetransmissions);
@@ -263,7 +261,6 @@ int llwrite(const unsigned char *buf, int bufSize)
                         if (rbit == (frameNumber ^ 1)) {
                             alarm_stop();
                             frameNumber ^= 1;
-                            free(frame);
                             return bufSize;
                         }
                         // else: RR for current Ns (duplicate) → keep waiting
@@ -273,7 +270,6 @@ int llwrite(const unsigned char *buf, int bufSize)
                 // hard read error
                 alarm_stop();
                 printf("[TX] Read error while waiting RR/REJ\n");
-                free(frame);
                 return -1;
             }
         }
@@ -289,7 +285,6 @@ retransmit_same_frame:
         ; // label target needs a statement
     }
 
-    free(frame);
     return -1;
 }
 
