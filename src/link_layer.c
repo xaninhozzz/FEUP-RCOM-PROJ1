@@ -28,7 +28,6 @@
 // Globals / configuration saved from llopen
 ////////////////////////////////////////////////
 
-static int fd = -1;
 static LinkLayerRole role;
 static int timeout;           // seconds
 static int nRetransmissions;  // max retries
@@ -64,8 +63,8 @@ static int send_bytes(const unsigned char *buf, int len)
 ////////////////////////////////////////////////
 int llopen(LinkLayer connectionParameters)
 {
-    fd = openSerialPort(connectionParameters.serialPort, connectionParameters.baudRate);
-    if (fd < 0) {
+
+    if (openSerialPort(connectionParameters.serialPort, connectionParameters.baudRate) < 0) {
         perror("openSerialPort");
         return -1;
     }
@@ -234,7 +233,7 @@ int llwrite(const unsigned char *buf, int bufSize)
         alarm_start((unsigned int)timeout);
 
         while (alarmActive) {
-            ssize_t r = read(fd, &byte, 1);
+            ssize_t r = readByteSerialPort(&byte);
             if (r == 1) {
                 state = getSOrUState(state, byte, A_RX, &control);
                 // S/U parsing: FSM will self-recover to START/FLAG_RCV as needed
@@ -308,7 +307,7 @@ int llread(unsigned char *packet)
     int idx = 0;
 
     while (1) {
-        ssize_t r = read(fd, &byte, 1);
+        ssize_t r = readByteSerialPort(&byte);
         if (r == 1) {
             state = getIState(state, byte, A_TX, &frameNumberRx, stuffed_buf, &idx, sizeof(stuffed_buf));
             if (state == STATE_ERROR) { state = STATE_START; idx = 0; continue; }           //BE SURE OF THIS
@@ -390,7 +389,7 @@ int llclose()
             alarm_start((unsigned int)timeout);
 
             while (alarmActive) {
-                ssize_t r = read(fd, &byte, 1);
+                ssize_t r = readByteSerialPort(&byte);
                 if (r == 1) {
                     state = getSOrUState(state, byte, A_RX, &control);
                     // S/U parsing: FSM will self-recover to START/FLAG_RCV as needed
@@ -425,7 +424,7 @@ int llclose()
 
         // Wait DISC from Tx
         while (1) {
-            ssize_t r = read(fd, &byte, 1);
+            ssize_t r = readByteSerialPort(&byte);
             if (r == 1) {
                 state = getSOrUState(state, byte, A_TX, &control);
                 // S/U parsing: FSM will self-recover to START/FLAG_RCV as needed
@@ -444,7 +443,7 @@ int llclose()
                         alarm_start((unsigned int)timeout);
 
                         while (alarmActive) {
-                            ssize_t r2 = read(fd, &byte, 1);
+                            ssize_t r2 = readByteSerialPort(&byte);
                             if (r2 == 1) {
                                 state = getSOrUState(state, byte, A_RX, &control);
                                 // S/U parsing: FSM will self-recover to START/FLAG_RCV as needed
